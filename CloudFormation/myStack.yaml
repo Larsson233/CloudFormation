@@ -7,28 +7,12 @@ Description: >
   template.
 
 Resources:
-  MyEC2Instance:
-    Type: 'AWS::EC2::Instance'
-    Properties:
-      InstanceType: t2.micro
-      ImageId: ami-04f1014c8adcfa670
-      KeyName: AwsDemoKey
-      SecurityGroupIds:
-       - !GetAtt MySecGrp.GroupId
-      UserData: !Base64 |
-          #!bin/bash
-          yum update
-          yum install nginx -y
-          systemctl start nginx
-          systemctl enable nginx
 
-
-
-  MySecGrp:
+  MyLBSecGrp:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: "MyDemoSecGrp"
-      GroupDescription: "WebServer Sec Grp"
+      GroupName: "MyLBSecGrp"
+      GroupDescription: "Load balancer Sec Grp"
       SecurityGroupIngress:
         - IpProtocol: "tcp"
           FromPort: 22
@@ -38,3 +22,61 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+
+  MyTempSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "MyTempSecGrp"
+      GroupDescription: "Template sec grp"
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+         
+
+  myLaunchTemplate:
+      Type: 'AWS::EC2::LaunchTemplate'
+      Properties:
+        LaunchTemplateName: "FormationTemplate"
+        LaunchTemplateData:
+          NetworkInterfaces:
+            - DeviceIndex: 0
+              AssociatePublicIpAddress: true
+              Groups:
+                - !GetAtt MyTempSecGrp.GroupId
+              DeleteOnTermination: true
+          Placement:
+            Tenancy: dedicated
+          ImageId: ami-04f1014c8adcfa670
+          InstanceType: t2.micro
+          KeyName: AwsDemoKey
+  
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: MyTargetGroup
+      Port: 80
+      Protocol: HTTP
+      VpcId: vpc-0e0102b7d2a6442bb
+      TargetType: instance
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /health-check
+      HealthCheckPort: 80
+      HealthCheckProtocol: HTTP
+
+  MyLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      IpAddressType: ipv4
+      Name: "MyLB"
+      Scheme: internet-facing
+      SecurityGroups: 
+        - !GetAtt MyLBSecGrp.GroupId
+      SubnetMappings: 
+        - SubnetId: subnet-0eb075e9f84c19e8d
+        - SubnetId: subnet-0373ffc28a383518f
+        - SubnetId: subnet-03bfaf7e959364fbf

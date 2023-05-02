@@ -1,0 +1,16 @@
+Resources:
+  MyEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-04f1014c8adcfa670
+      KeyName: AwsDemoKey
+      SecurityGroupIds:
+       - sg-0878ec478fdbeb447
+      UserData: !Base64 |
+          #!bin/bash
+          yum update
+          yum install nginx -y
+          systemctl start nginx
+          systemctl enable nginx
+          
