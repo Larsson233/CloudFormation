@@ -36,21 +36,34 @@ Resources:
         - IpProtocol: "tcp"
           FromPort: 80
           ToPort: 80
-         
+          SourceSecurityGroupId: !GetAtt MyLBSecGrp.GroupId
 
-  myLaunchTemplate:
+  MyDatabaseSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "MyDatabaseSecGrp"
+      GroupDescription: "Template sec grp"
+      SecurityGroupIngress:
+      - IpProtocol: "tcp"
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: "tcp"
+        FromPort: 80
+        ToPort: 80
+        
+
+  MyLaunchTemplate:
       Type: 'AWS::EC2::LaunchTemplate'
       Properties:
         LaunchTemplateName: "FormationTemplate"
-        LaunchTemplateData:
+        LaunchTemplateData: 
           NetworkInterfaces:
             - DeviceIndex: 0
               AssociatePublicIpAddress: true
               Groups:
                 - !GetAtt MyTempSecGrp.GroupId
               DeleteOnTermination: true
-          Placement:
-            Tenancy: dedicated
           ImageId: ami-04f1014c8adcfa670
           InstanceType: t2.micro
           KeyName: AwsDemoKey
@@ -80,3 +93,66 @@ Resources:
         - SubnetId: subnet-0eb075e9f84c19e8d
         - SubnetId: subnet-0373ffc28a383518f
         - SubnetId: subnet-03bfaf7e959364fbf
+
+  MyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MyLoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+
+  MyAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: MyAutoScalingGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MyLaunchTemplate
+        Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      TargetGroupARNs:
+        - !Ref MyTargetGroup
+      VPCZoneIdentifier:
+          - subnet-0eb075e9f84c19e8d
+          - subnet-0373ffc28a383518f
+          - subnet-03bfaf7e959364fbf
+
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: mydbsubnetgroup
+      DBSubnetGroupDescription: "My DB subnet group"
+      SubnetIds:
+        - subnet-0eb075e9f84c19e8d
+        - subnet-0373ffc28a383518f
+        - subnet-03bfaf7e959364fbf
+
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: MyDBInstance
+      DBInstanceClass: db.t2.micro
+      Engine: mariadb
+      EngineVersion: "10.6.10"
+      MasterUsername: admin
+      MasterUserPassword: password
+      AllocatedStorage: 20
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt MyTempSecGrp.GroupId  
+        
+  MyEfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      Encrypted: true
+      FileSystemTags:
+        - Key: Name
+          Value: MyEfsFileSystem
+      ThroughputMode: bursting
+      BackupPolicy:
+        Status: ENABLED
