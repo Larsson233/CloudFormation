@@ -8,16 +8,27 @@ Description: >
 
 Resources:
 
+  MyStartUpSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "MyStartUpSecGrp"
+      GroupDescription: "Start up Sec Grp"
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0./0
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
   MyLBSecGrp:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: "MyLBSecGrp"
       GroupDescription: "Load balancer Sec Grp"
       SecurityGroupIngress:
-        - IpProtocol: "tcp"
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
         - IpProtocol: "tcp"
           FromPort: 80
           ToPort: 80
@@ -30,28 +41,68 @@ Resources:
       GroupDescription: "Template sec grp"
       SecurityGroupIngress:
         - IpProtocol: "tcp"
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "tcp"
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !GetAtt MyLBSecGrp.GroupId
+
+  MyEFSSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "MyEFSSecGrp"
+      GroupDescription: "EFS sec grp"
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !GetAtt MyTempSecGrp.GroupId
+        - IpProtocol: "tcp"
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !GetAtt MyStartUpSecGrp.GroupId
 
   MyDatabaseSecGrp:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: "MyDatabaseSecGrp"
-      GroupDescription: "Template sec grp"
+      GroupDescription: "Database sec grp"
       SecurityGroupIngress:
       - IpProtocol: "tcp"
-        FromPort: 22
-        ToPort: 22
-        CidrIp: 0.0.0.0/0
-      - IpProtocol: "tcp"
-        FromPort: 80
-        ToPort: 80
-        
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !GetAtt MyTempSecGrp.GroupId
+
+  # MyEC2Instance:
+  #   Type: 'AWS::EC2::Instance'
+  #   Properties:
+  #     InstanceType: t2.micro
+  #     ImageId: ami-04f1014c8adcfa670
+  #     KeyName: AwsDemoKey
+  #     SecurityGroupIds:
+  #      - sg-0878ec478fdbeb447
+  #     UserData: !Base64 |
+  #         dnf update -y
+  #         dnf install -y wget
+  #         dnf install -y httpd
+  #         dnf install -y php-mysqlnd php-fpm php-mysqli php-json php php-devel php-gd
+  #         dnf install -y amazon-efs-utils
+  #         systemctl start httpd
+  #         systemctl enable httpd
+  #         chown -R apache /var/www
+  #         chgrp -R apache /var/www
+  #         chmod 2775 /var/www
+  #         find /var/www -type d -exec sudo chmod 2775 {} ;
+  #         find /var/www -type f -exec sudo chmod 0644 {} ;
+  #         wget https://wordpress.org/latest.tar.gz
+  #         tar -xzf latest.tar.gz
+  #         cp -r wordpress/* /var/www/html/
+  #         wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -O /tmp/wp-cli.phar
+  #         chmod +x /tmp/wp-cli.phar 
+  #         /tmp/wp-cli.phar config create --dbname=!GetAtt MyDBInstance.DBName  --dbuser=Admin --dbpass=Password --path=/var/www/html
+
+  #         TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  #         DNS=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/public-hostname)
+
+  #         /tmp/wp-cli.phar core install --url=$DNS --title=Example --admin_user=Admin --admin_password=Password --admin_email=info@example.com --path=/var/www/html
 
   MyLaunchTemplate:
       Type: 'AWS::EC2::LaunchTemplate'
@@ -67,7 +118,30 @@ Resources:
           ImageId: ami-04f1014c8adcfa670
           InstanceType: t2.micro
           KeyName: AwsDemoKey
-  
+          UserData:
+            Fn::Base64: !Sub |
+              #!/bin/bash -ex
+              dnf update -y
+              dnf install -y wget
+              dnf install -y httpd
+              dnf install -y php-mysqlnd php-fpm php-mysqli php-json php php-devel php-gd
+              dnf install -y amazon-efs-utils
+              dnf install -y mariadb105-server
+              systemctl start httpd
+              systemctl enable httpd
+              chown -R apache /var/www
+              chgrp -R apache /var/www
+              chmod 2775 /var/www
+              find /var/www -type d -exec chmod 2775 {} \;
+              find /var/www -type f -exec chmod 0644 {} \;
+              wget https://wordpress.org/latest.tar.gz
+              tar -xzf latest.tar.gz
+              cp -r wordpress/* /var/www/html/
+              wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -O /tmp/wp-cli.phar
+              chmod +x /tmp/wp-cli.phar 
+              /tmp/wp-cli.phar config create --dbname=${MyDBInstance.DBName} --dbuser=Admin --dbpass=Password --path=/var/www/html --dbhost=${MyDBInstance.Endpoint.Address}
+              /tmp/wp-cli.phar core install --url=${MyLoadBalancer.DNSName} --title=Kingkong --admin_user=Admin --admin_password=Password --admin_email=info@example.com --path=/var/www/html
+
   MyTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -106,6 +180,12 @@ Resources:
 
   MyAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+    - MyDBInstance
+    - MyEfsFileSystem
+    - MyEfsMountTarget1
+    - MyEfsMountTarget2
+    - MyEfsMountTarget3
     Properties:
       AutoScalingGroupName: MyAutoScalingGroup
       LaunchTemplate:
@@ -143,8 +223,9 @@ Resources:
       AllocatedStorage: 20
       DBSubnetGroupName: !Ref MyDBSubnetGroup
       VPCSecurityGroups:
-        - !GetAtt MyTempSecGrp.GroupId  
-        
+        - !GetAtt MyDatabaseSecGrp.GroupId  
+      DBName: MyWPDatabase
+
   MyEfsFileSystem:
     Type: AWS::EFS::FileSystem
     Properties:
@@ -156,3 +237,26 @@ Resources:
       ThroughputMode: bursting
       BackupPolicy:
         Status: ENABLED
+  MyEfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEfsFileSystem
+      SubnetId: subnet-0eb075e9f84c19e8d
+      SecurityGroups:
+        - !GetAtt MyEFSSecGrp.GroupId
+
+  MyEfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEfsFileSystem
+      SubnetId: subnet-0373ffc28a383518f
+      SecurityGroups:
+        - !GetAtt MyEFSSecGrp.GroupId
+
+  MyEfsMountTarget3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEfsFileSystem
+      SubnetId: subnet-03bfaf7e959364fbf
+      SecurityGroups:
+        - !GetAtt MyEFSSecGrp.GroupId
