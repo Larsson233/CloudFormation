@@ -88,7 +88,6 @@ Resources:
           dnf update -y
           dnf install -y wget
           dnf install -y httpd
-          dnf install -y php-mysqlnd php-fpm php-mysqli php-json php php-devel php-gd
           dnf install -y amazon-efs-utils
           dnf install -y mariadb105-server
           systemctl start httpd
