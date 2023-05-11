@@ -17,10 +17,6 @@ Resources:
         - IpProtocol: "tcp"
           FromPort: 22
           ToPort: 22
-          CidrIp: 0.0.0.0./0
-        - IpProtocol: "tcp"
-          FromPort: 80
-          ToPort: 80
           CidrIp: 0.0.0.0/0
 
   MyLBSecGrp:
@@ -70,39 +66,46 @@ Resources:
         FromPort: 3306
         ToPort: 3306
         SourceSecurityGroupId: !GetAtt MyTempSecGrp.GroupId
+      - IpProtocol: "tcp"
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !GetAtt MyStartUpSecGrp.GroupId
 
-  # MyEC2Instance:
-  #   Type: 'AWS::EC2::Instance'
-  #   Properties:
-  #     InstanceType: t2.micro
-  #     ImageId: ami-04f1014c8adcfa670
-  #     KeyName: AwsDemoKey
-  #     SecurityGroupIds:
-  #      - sg-0878ec478fdbeb447
-  #     UserData: !Base64 |
-  #         dnf update -y
-  #         dnf install -y wget
-  #         dnf install -y httpd
-  #         dnf install -y php-mysqlnd php-fpm php-mysqli php-json php php-devel php-gd
-  #         dnf install -y amazon-efs-utils
-  #         systemctl start httpd
-  #         systemctl enable httpd
-  #         chown -R apache /var/www
-  #         chgrp -R apache /var/www
-  #         chmod 2775 /var/www
-  #         find /var/www -type d -exec sudo chmod 2775 {} ;
-  #         find /var/www -type f -exec sudo chmod 0644 {} ;
-  #         wget https://wordpress.org/latest.tar.gz
-  #         tar -xzf latest.tar.gz
-  #         cp -r wordpress/* /var/www/html/
-  #         wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -O /tmp/wp-cli.phar
-  #         chmod +x /tmp/wp-cli.phar 
-  #         /tmp/wp-cli.phar config create --dbname=!GetAtt MyDBInstance.DBName  --dbuser=Admin --dbpass=Password --path=/var/www/html
-
-  #         TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-  #         DNS=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/public-hostname)
-
-  #         /tmp/wp-cli.phar core install --url=$DNS --title=Example --admin_user=Admin --admin_password=Password --admin_email=info@example.com --path=/var/www/html
+  MyEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn:
+    - MyDBInstance
+    - MyEfsFileSystem
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-04f1014c8adcfa670
+      KeyName: AwsDemoKey
+      SecurityGroupIds: 
+      - !GetAtt MyStartUpSecGrp.GroupId
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          dnf update -y
+          dnf install -y wget
+          dnf install -y httpd
+          dnf install -y php-mysqlnd php-fpm php-mysqli php-json php php-devel php-gd
+          dnf install -y amazon-efs-utils
+          dnf install -y mariadb105-server
+          systemctl start httpd
+          systemctl enable httpd
+          chown -R apache /var/www
+          chgrp -R apache /var/www
+          chmod 2775 /var/www
+          find /var/www -type d -exec chmod 2775 {} \;
+          find /var/www -type f -exec chmod 0644 {} \;
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          mount -t efs -o tls ${MyEfsFileSystem.FileSystemId}:/ /var/www/html
+          cp -r wordpress/* /var/www/html/
+          wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -O /tmp/wp-cli.phar
+          chmod +x /tmp/wp-cli.phar 
+          /tmp/wp-cli.phar config create --dbname=MyWPDatabase --dbuser=Admin --dbpass=Password --path=/var/www/html --dbhost=${MyDBInstance.Endpoint.Address}
+          /tmp/wp-cli.phar core install --url=${MyLoadBalancer.DNSName} --title=Kingkong --admin_user=Admin --admin_password=Password --admin_email=info@example.com --path=/var/www/html
 
   MyLaunchTemplate:
       Type: 'AWS::EC2::LaunchTemplate'
@@ -126,22 +129,11 @@ Resources:
               dnf install -y httpd
               dnf install -y php-mysqlnd php-fpm php-mysqli php-json php php-devel php-gd
               dnf install -y amazon-efs-utils
-              dnf install -y mariadb105-server
               systemctl start httpd
               systemctl enable httpd
-              chown -R apache /var/www
-              chgrp -R apache /var/www
-              chmod 2775 /var/www
-              find /var/www -type d -exec chmod 2775 {} \;
-              find /var/www -type f -exec chmod 0644 {} \;
-              wget https://wordpress.org/latest.tar.gz
-              tar -xzf latest.tar.gz
-              cp -r wordpress/* /var/www/html/
-              wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -O /tmp/wp-cli.phar
-              chmod +x /tmp/wp-cli.phar 
-              /tmp/wp-cli.phar config create --dbname=${MyDBInstance.DBName} --dbuser=Admin --dbpass=Password --path=/var/www/html --dbhost=${MyDBInstance.Endpoint.Address}
-              /tmp/wp-cli.phar core install --url=${MyLoadBalancer.DNSName} --title=Kingkong --admin_user=Admin --admin_password=Password --admin_email=info@example.com --path=/var/www/html
-
+              mount -t efs -o tls ${MyEfsFileSystem.FileSystemId}:/ /var/www/html
+              
+             
   MyTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -181,19 +173,15 @@ Resources:
   MyAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn:
-    - MyDBInstance
-    - MyEfsFileSystem
-    - MyEfsMountTarget1
-    - MyEfsMountTarget2
-    - MyEfsMountTarget3
+    - MyEC2Instance
     Properties:
       AutoScalingGroupName: MyAutoScalingGroup
       LaunchTemplate:
         LaunchTemplateId: !Ref MyLaunchTemplate
         Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
       MinSize: 1
-      MaxSize: 1
-      DesiredCapacity: 1
+      MaxSize: 3
+      DesiredCapacity: 2
       TargetGroupARNs:
         - !Ref MyTargetGroup
       VPCZoneIdentifier:
@@ -218,13 +206,13 @@ Resources:
       DBInstanceClass: db.t2.micro
       Engine: mariadb
       EngineVersion: "10.6.10"
-      MasterUsername: admin
-      MasterUserPassword: password
+      MasterUsername: Admin
+      MasterUserPassword: Password
       AllocatedStorage: 20
       DBSubnetGroupName: !Ref MyDBSubnetGroup
+      DBName: MyWPDatabase
       VPCSecurityGroups:
         - !GetAtt MyDatabaseSecGrp.GroupId  
-      DBName: MyWPDatabase
 
   MyEfsFileSystem:
     Type: AWS::EFS::FileSystem
@@ -237,6 +225,7 @@ Resources:
       ThroughputMode: bursting
       BackupPolicy:
         Status: ENABLED
+
   MyEfsMountTarget1:
     Type: AWS::EFS::MountTarget
     Properties:
